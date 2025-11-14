@@ -26,15 +26,36 @@ function SlideshowView({ state, goPrev, goNext, stopTimer, dispatch }) {
     >
       {/* Overlay for focus effect */}
       {state.timerActive && (
-        <div style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',background:'rgba(0, 0, 0, 0.7)',zIndex:1, pointerEvents:'none'}}></div>
+        <div style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',background:'rgba(0, 0, 0, 0)',zIndex:1, pointerEvents:'none'}}></div>
       )}
       {/* Clock and controls on the left */}
       <div style={{zIndex:2, marginRight:32, flexShrink:0, display:'flex', flexDirection:'column', alignItems:'center', minWidth:180}}>
         <AnalogClock seconds={state.timeLeft} />
         <div style={{marginTop:24, display:'flex', flexDirection:'column', alignItems:'center', gap:12}}>
           <div style={{display:'flex', gap:12}}>
-            <button onClick={stopTimer} disabled={!state.timerActive} style={{padding:'8px 18px',fontSize:15,borderRadius:8,border:'none',background:!state.timerActive?'#eee':'#f7b801',color:!state.timerActive?'#aaa':'#222',cursor:!state.timerActive?'not-allowed':'pointer'}}>Stop</button>
-            <button onClick={() => dispatch({ type: 'START', restart: true })} style={{padding:'8px 18px',fontSize:15,borderRadius:8,border:'none',background:'#87535dff',color:'#fff',cursor:'pointer'}}>Restart</button>
+            {/* Stop or Continue button */}
+            {state.timerActive ? (
+              <button onClick={stopTimer} disabled={!state.timerActive} title="Pause" style={{padding:'8px',fontSize:22,borderRadius:8,border:'none',background:!state.timerActive?'#eee':'#f7b801',color:!state.timerActive?'#aaa':'#222222',cursor:!state.timerActive?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                {/* Pause icon */}
+                <span style={{display:'inline-block',width:20}}>
+                  <svg width="20" height="20" viewBox="0 0 20 20"><rect x="3" y="3" width="5" height="14" rx="2" fill="#222"/><rect x="12" y="3" width="5" height="14" rx="2" fill="#222"/></svg>
+                </span>
+              </button>
+            ) : (
+              <button onClick={() => dispatch({ type: 'RESTART_TIMER' })} title="Continue" style={{padding:'8px',fontSize:22,borderRadius:8,border:'none',background:'#4caf50',color:'#fff',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                {/* Play icon */}
+                <span style={{display:'inline-block',width:20}}>
+                  <svg width="20" height="20" viewBox="0 0 20 20"><polygon points="4,3 18,10 4,17" fill="#fff"/></svg>
+                </span>
+              </button>
+            )}
+            {/* Restart button */}
+            <button onClick={() => dispatch({ type: 'RESTART_TIMER' })} title="Restart" style={{padding:'8px',fontSize:22,borderRadius:8,border:'none',background:'#87535dff',color:'#fff',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              {/* Restart icon */}
+              <span style={{display:'inline-block',width:20}}>
+                <svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 3v2a5 5 0 1 1-4.546 2.916" stroke="#fff" strokeWidth="2" fill="none"/><polyline points="7 3 10 3 10 6" stroke="#fff" strokeWidth="2" fill="none"/></svg>
+              </span>
+            </button>
           </div>
           <div style={{color:'#c00', fontWeight:'bold', fontSize:22, letterSpacing:'1px', background:'#fff', borderRadius:8, padding:'2px 16px', marginTop:4, boxShadow:'0 1px 4px #0001'}}>
             {state.timeLeft > 0 ? `${Math.floor(state.timeLeft/60)}:${String(state.timeLeft%60).padStart(2,'0')}` : 'Time is up!'}
@@ -227,9 +248,46 @@ function reducer(state, action) {
   }
 }
 
+
+
 function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const timerRef = useRef();
+  const [showAlert, setShowAlert] = useState(false);
+  const prevIdx = useRef(state.currentIdx);
+  const [audioReady, setAudioReady] = useState(false);
+  const audioRef = useRef(null);
+
+  // Prepare beep sound after first user interaction
+  useEffect(() => {
+    const enableAudio = () => {
+      if (!audioRef.current) {
+        // Create a short beep using Web Audio API
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.value = 880;
+        gain.gain.value = 0.1;
+        oscillator.connect(gain);
+        gain.connect(ctx.destination);
+        audioRef.current = () => {
+          const now = ctx.currentTime;
+          oscillator.start(now);
+          oscillator.stop(now + 0.12);
+        };
+        setAudioReady(true);
+      }
+      window.removeEventListener('pointerdown', enableAudio);
+      window.removeEventListener('keydown', enableAudio);
+    };
+    window.addEventListener('pointerdown', enableAudio, { once: true });
+    window.addEventListener('keydown', enableAudio, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', enableAudio);
+      window.removeEventListener('keydown', enableAudio);
+    };
+  }, []);
 
   // Handle image upload
   const handleImageUpload = (e) => {
@@ -258,7 +316,6 @@ function App() {
   // Stop/restart timer
   const stopTimer = () => dispatch({ type: 'STOP_TIMER' });
 
-
   // Timer effect
   useEffect(() => {
     if (!state.started || !state.timerActive) return;
@@ -266,8 +323,21 @@ function App() {
     return () => clearTimeout(timerRef.current);
   }, [state.started, state.timerActive, state.timeLeft]);
 
+  // Alert and sound on image change
+  useEffect(() => {
+    if (state.started && state.images.length > 0 && prevIdx.current !== state.currentIdx) {
+      setShowAlert(true);
+      setTimeout(() => setShowAlert(false), 1200);
+      if (audioReady && audioRef.current) {
+        try { audioRef.current(); } catch (e) {}
+      }
+    }
+    prevIdx.current = state.currentIdx;
+  }, [state.currentIdx, state.started, state.images.length, audioReady]);
+
   return (
     <div className="container" style={{maxWidth:600,margin:'0 auto',padding:24}}>
+      {/* Alert toast removed as requested */}
       {!state.started && (
         <>
           <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:24}}>
@@ -281,7 +351,7 @@ function App() {
             />
             <div className="image-list" style={{display:'flex',flexWrap:'wrap',gap:16,justifyContent:'center'}}>
               {state.images.map((img, idx) => (
-                <div key={img.url} className="image-item" style={{display:'flex',flexDirection:'column',alignItems:'center',background:'#f8f8f8',borderRadius:10,padding:8,boxShadow:'0 1px 4px #0001'}}>
+                <div key={img.url} className="image-item" style={{display:'flex',flexDirection:'column',alignItems:'center',background:'#f8f8f8',borderRadius:10,padding:8,boxShadow:'0 1px 4px rgba(0, 0, 0, 0)'}}>
                   <img src={img.url} alt={img.name} width={80} height={80} style={{objectFit:'cover',borderRadius:8,marginBottom:6}} />
                   <div style={{fontSize:12,marginBottom:4,maxWidth:80,overflow:'hidden',textOverflow:'ellipsis'}}>{img.name}</div>
                   <label style={{fontSize:13}}>Timer:</label>
@@ -316,8 +386,6 @@ function App() {
       {state.started && state.images.length > 0 && (
         <SlideshowView state={state} goPrev={goPrev} goNext={goNext} stopTimer={stopTimer} dispatch={dispatch} />
       )}
-
-
     </div>
   );
 }
